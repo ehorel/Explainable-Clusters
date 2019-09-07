@@ -104,8 +104,6 @@ if __name__ == "__main__":
     # hidden2 = BatchNormalization()(hidden2)
     # hidden2 = Dropout(rate=dropout_rate)(hidden2)
     hidden3 = Dense(nhidden3, activation='relu')(hidden2)
-    # hidden3 = BatchNormalization()(hidden3)
-    # hidden3 = Dropout(rate=dropout_rate)(hidden3)
     output = Dense(nr_clusters, activation='sigmoid')(hidden3)
     early_stop = EarlyStopping(monitor='val_categorical_accuracy',
                                min_delta=0.001,
