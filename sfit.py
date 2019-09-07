@@ -60,7 +60,7 @@ def categorical_cross_entropy_loss(predicted_y, true_y):
     categorical_cross_entropy_loss
         a numpy array of shape (N, )
     """
-    return -np.sum(np.multiply(np.log(np.maximum(predicted_y,1e-6)), true_y), axis=1)
+    return -np.sum(np.multiply(np.log(np.maximum(predicted_y, 1e-6)), true_y), axis=1)
 
 
 def compute_errors_first(loss, model, n, p, x, y):

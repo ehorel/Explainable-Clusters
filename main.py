@@ -9,6 +9,8 @@ from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from keras.utils import np_utils
 from sfit import *
 import tensorflow as tf
+import warnings
+warnings.filterwarnings("ignore")
 
 
 def prepare_data(df, add_intercept=True):
@@ -38,30 +40,45 @@ if __name__ == "__main__":
     tf.compat.v1.random.set_random_seed(10)
 
     print('Read and prepare data:')
-    data_path = './data/firms_ratios_full.csv'
+    # data_path = './data/firms_ratios_full.csv'
+    data_path = './data/firms_ratios_gvkey_08-09-08-19.csv'
     df = pd.read_csv(data_path)
     df.dropna(axis=0, how='any', inplace=True)
-    df = df.groupby('permno').last()
+    df = df.groupby('gvkey').last()
+    np.savetxt('./data/gvkeys_list.txt', df.index.values.astype(int), fmt='%i')
+
     df = df.iloc[:, 3:]
     df = df.drop('DIVYIELD', axis=1)
+
+    # idx_to_drop = [2285, 6733, 122380, 147175, 179621]
+    # df.drop([2285, 6733, 122380, 147175, 179621], inplace=True)
+
     print('Total number of observations: {0}'.format(df.shape[0]))
     print('Number of features: {0}'.format(df.shape[1]))
     df_means = df.mean()
     df_stds = df.std()
-    df = (df - df_means)/df_stds
+    df = (df - df_means) / df_stds
 
     print('Cluster data:')
-    clustering = AgglomerativeClustering(n_clusters=5, affinity='euclidean', linkage='ward')
+    nr_clusters = 5
+    clustering = AgglomerativeClustering(n_clusters=nr_clusters, affinity='euclidean', linkage='ward')
     labels = clustering.fit_predict(df.values)
 
     dict_clusters = {}
     for idx, label in enumerate(clustering.labels_):
         if label in dict_clusters:
-            dict_clusters[label].append(idx)
+            dict_clusters[label].append(df.iloc[idx].name)
         else:
-            dict_clusters[label] = [idx]
+            dict_clusters[label] = [df.iloc[idx].name]
     for key in dict_clusters:
         print('Cluster {0} has {1} samples'.format(key, len(dict_clusters[key])))
+
+    gvkeys_to_names = pd.read_csv('./data/gvkeys_to_names.csv')
+    gvkeys_to_names.drop_duplicates(inplace=True)
+    for key in dict_clusters:
+        list_gvkeys = dict_clusters[key]
+        cluster_df = gvkeys_to_names.loc[gvkeys_to_names['gvkey'].isin(list_gvkeys)]
+        cluster_df.to_csv('./data/cluster_{0}_companies.csv'.format(key))
 
     print('Prepare data for classification:')
     df['label'] = labels
@@ -89,7 +106,7 @@ if __name__ == "__main__":
     hidden3 = Dense(nhidden3, activation='relu')(hidden2)
     # hidden3 = BatchNormalization()(hidden3)
     # hidden3 = Dropout(rate=dropout_rate)(hidden3)
-    output = Dense(5, activation='sigmoid')(hidden3)
+    output = Dense(nr_clusters, activation='sigmoid')(hidden3)
     early_stop = EarlyStopping(monitor='val_categorical_accuracy',
                                min_delta=0.001,
                                patience=20)
@@ -122,7 +139,7 @@ if __name__ == "__main__":
     print('Neural network acc on test set: {0} \n'.format(np.round(nn_test_acc, 2)))
     print('Neural network bal acc on test set: {0} \n'.format(np.round(nn_test_bal_acc, 2)))
 
-    print('Run SFIT on trained model')
+    print('Overall SFIT analysis:')
     # Compute SFIT on neural network model:
     alpha = 0.05
     beta = 1e-6
@@ -131,7 +148,8 @@ if __name__ == "__main__":
                                         x=X_test.values,
                                         y=Y_test_trans,
                                         alpha=alpha,
-                                        beta=beta)
+                                        beta=beta,
+                                        verbose=0)
 
     significant_var = results_sfit_lin[0]
     median = []
@@ -151,5 +169,39 @@ if __name__ == "__main__":
     results.sort_values(by='median', ascending=False, inplace=True)
     print(results)
 
+    print('SFIT analysis per cluster:')
+    for c in dict_clusters:
+        if len(dict_clusters[c]) > 10:
+            mask = df['label'] == c
+            X = df.iloc[:, 0:-1]
+            X = X.loc[mask]
+            Y = df.iloc[:, -1]
+            Y = np_utils.to_categorical(Y)
+            Y = Y[mask]
+            results_sfit_lin = sfit_first_order(model=model,
+                                                loss=categorical_cross_entropy_loss,
+                                                x=X.values,
+                                                y=Y,
+                                                alpha=alpha,
+                                                beta=beta,
+                                                verbose=0)
 
+            significant_var = results_sfit_lin[0]
+            median = []
+            lower = []
+            upper = []
+            for key in results_sfit_lin[1]:
+                median.append(results_sfit_lin[1][key][0])
+                lower.append(results_sfit_lin[1][key][1][0])
+                upper.append(results_sfit_lin[1][key][1][1])
 
+            df_dict = {}
+            df_dict['variable'] = X.columns[significant_var]
+            df_dict['median'] = median
+            df_dict['CI_lower_bound'] = lower
+            df_dict['CI_upper_bound'] = upper
+            results = pd.DataFrame.from_dict(df_dict)
+            results.sort_values(by='median', ascending=False, inplace=True)
+            results.to_csv('./data/cluster_{0}_sfit_results.csv'.format(c))
+            print('Cluster {0}'.format(c))
+            print(results)
